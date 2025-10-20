@@ -14,7 +14,9 @@ dependencies = [
     "pydantic-settings (>=2.11.0,<3.0.0)",
     "websockets (>=15.0.1,<16.0.0)",
     "sqlalchemy (>=2.0.44,<3.0.0)",
-    "aiosqlite (>=0.21.0,<0.22.0)"
+    "aiosqlite (>=0.21.0,<0.22.0)",
+    "flashtext (>=2.7,<3.0)",
+    "passlib[bcrypt] (>=1.7.4,<2.0.0)",
 ]
 
 

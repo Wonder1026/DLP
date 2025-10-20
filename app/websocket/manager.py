@@ -34,5 +34,28 @@ class ConnectionManager:
         await db.refresh(message)
         return message
 
+    async def save_violation(self, db: AsyncSession, user_id: int, username: str,
+                             display_name: str, message_text: str, found_keywords: list):
+        """Сохранение нарушения в БД"""
+        from app.models.violation import Violation
+
+        violation = Violation(
+            user_id=user_id,
+            username=username,
+            display_name=display_name,
+            message_text=message_text,
+            found_keywords=','.join(found_keywords) if found_keywords else '',
+            violation_type="keyword",
+            is_reviewed=False
+        )
+
+        db.add(violation)
+        await db.commit()
+        await db.refresh(violation)
+
+        print(f"🚨 Нарушение зафиксировано: {username} - {found_keywords}")
+
+        return violation
+
 
 manager = ConnectionManager()

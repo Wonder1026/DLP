@@ -1,11 +1,33 @@
 let ws = null;
-let username = "Пользователь " + Math.floor(Math.random() * 1000);
+let currentUser = null;
 
-// Подключаемся к WebSocket при загрузке страницы
+// Проверка авторизации при загрузке страницы
 window.addEventListener('load', function() {
+    // Проверяем, есть ли данные пользователя
+    const userData = localStorage.getItem('user');
+
+    if (!userData) {
+        // Пользователь не авторизован - редирект на страницу входа
+        window.location.href = '/login';
+        return;
+    }
+
+    // Парсим данные пользователя
+    currentUser = JSON.parse(userData);
+    console.log('Текущий пользователь:', currentUser);
+
+    // Отображаем имя пользователя
+    displayUserInfo();
+
+    // Загружаем историю и подключаемся к WebSocket
     loadHistory();
     connectWebSocket();
 });
+
+// function displayUserInfo() {
+//     // Покажем имя пользователя в интерфейсе (добавим позже)
+//     console.log('Вошёл как:', currentUser.display_name);
+// }
 
 async function loadHistory() {
     try {
@@ -15,7 +37,7 @@ async function loadHistory() {
         console.log('📚 Загружена история:', data);
 
         data.messages.forEach(msg => {
-            const messageType = msg.user === username ? 'sent' : 'received';
+            const messageType = msg.user === currentUser.display_name ? 'sent' : 'received';
             addMessage(msg.text, msg.user, messageType, true);
         });
 
@@ -32,14 +54,22 @@ function connectWebSocket() {
         addSystemMessage('Подключено к серверу');
     };
 
-    ws.onmessage = function(event) {
-        const data = JSON.parse(event.data);
-        console.log('📨 Получено сообщение:', data);
+ws.onmessage = function(event) {
+    const data = JSON.parse(event.data);
+    console.log('📨 Получено:', data);
 
-        // Определяем тип сообщения: своё или чужое
-        const messageType = data.user === username ? 'sent' : 'received';
+    // Обработка ошибки (блокировка DLP)
+    if (data.type === 'error') {
+        addSystemMessage(data.message);
+        return;
+    }
+
+    // Обычное сообщение
+    if (data.type === 'message') {
+        const messageType = data.user === currentUser.display_name ? 'sent' : 'received';
         addMessage(data.text, data.user, messageType, false);
-    };
+    }
+};
 
     ws.onerror = function(error) {
         console.error('❌ Ошибка WebSocket:', error);
@@ -60,7 +90,9 @@ function sendMessage() {
 
     // Отправляем через WebSocket
     const message = {
-        user: username,
+        user_id: currentUser.id,           // ← добавили
+        username: currentUser.username,     // ← добавили
+        user: currentUser.display_name,
         text: text,
         timestamp: new Date().toLocaleTimeString()
     };
@@ -93,6 +125,31 @@ function addSystemMessage(text) {
     messageDiv.innerHTML = `<em>Система: ${text}</em>`;
     chatBox.appendChild(messageDiv);
     chatBox.scrollTop = chatBox.scrollHeight;
+}
+
+function logout() {
+    if (confirm('Выйти из аккаунта?')) {
+        localStorage.removeItem('user');
+        window.location.href = '/login';
+    }
+}
+
+// Обновляем отображение информации о пользователе
+function displayUserInfo() {
+    const userInfoElement = document.getElementById('userInfo');
+    if (userInfoElement) {
+        userInfoElement.textContent = `👤 ${currentUser.display_name} (${currentUser.username})`;
+    }
+
+    // Показываем ссылку на админку только администраторам
+    const adminLink = document.getElementById('adminLink');
+    if (adminLink) {
+        if (currentUser.is_admin) {
+            adminLink.style.display = 'inline';
+        } else {
+            adminLink.style.display = 'none';
+        }
+    }
 }
 
 // Отправка по Enter
