@@ -2,6 +2,7 @@
 window.addEventListener('load', function() {
     loadKeywords();
     loadUsers();
+    loadViolations();
 });
 
 async function loadKeywords() {
@@ -176,13 +177,23 @@ function displayUsers(users) {
             badges = '<span class="admin-badge">ADMIN</span>';
         }
 
+        if (user.is_banned) {
+            badges += '<span class="admin-badge" style="background: #6c757d;">BANNED</span>';
+        }
+
         // Кнопка снятия прав (только для супер-админа)
         let actionButton = '';
         const userData = localStorage.getItem('user');
         if (userData) {
             const currentUserData = JSON.parse(userData);
-            if (currentUserData.is_super_admin && user.is_admin && !user.is_super_admin) {
-                actionButton = `<button onclick="removeAdmin(${user.id}, '${user.username}')" style="background: #dc3545; padding: 6px 12px; font-size: 12px;">Лишить статуса администратора</button>`;
+
+            // Кнопка разбана
+            if (currentUserData.is_admin && user.is_banned) {
+                actionButton = `<button onclick="unbanUser(${user.id}, '${user.username}')" style="background: #28a745; padding: 6px 12px; font-size: 12px;">Разбанить</button>`;
+            }
+            // Кнопка снятия админки (только для супер-админа)
+            else if (currentUserData.is_super_admin && user.is_admin && !user.is_super_admin) {
+                actionButton = `<button onclick="removeAdmin(${user.id}, '${user.username}')" style="background: #dc3545; padding: 6px 12px; font-size: 12px;">Снять админа</button>`;
             }
         }
 
@@ -302,6 +313,200 @@ async function removeAdmin(userId, username) {
     } catch (error) {
         console.error('Ошибка:', error);
         alert('❌ Ошибка при снятии прав');
+    }
+}
+
+// Загрузка нарушений
+async function loadViolations() {
+    try {
+        const userData = localStorage.getItem('user');
+        if (!userData) return;
+
+        const user = JSON.parse(userData);
+        const showOnlyUnreviewed = document.getElementById('showOnlyUnreviewed').checked;
+
+        let url = `/api/violations/?admin_id=${user.id}`;
+        if (showOnlyUnreviewed) {
+            url += '&is_reviewed=false';
+        }
+
+        const response = await fetch(url);
+        const data = await response.json();
+
+        displayViolations(data.violations);
+        updateViolationsStats(data.violations);
+
+    } catch (error) {
+        console.error('Ошибка загрузки нарушений:', error);
+    }
+}
+
+function displayViolations(violations) {
+    const container = document.getElementById('violationsList');
+    container.innerHTML = '';
+
+    if (violations.length === 0) {
+        container.innerHTML = '<div class="empty-state">Нет нарушений</div>';
+        return;
+    }
+
+    violations.forEach(violation => {
+        const card = document.createElement('div');
+        card.className = `violation-card ${violation.is_reviewed ? 'reviewed' : ''}`;
+
+        const initial = violation.display_name.charAt(0).toUpperCase();
+        const reviewedBadge = violation.is_reviewed
+            ? '<span class="reviewed-badge">✓ Проверено</span>'
+            : '';
+
+        const keywordsBadges = violation.found_keywords
+            .map(kw => `<span class="keyword-badge">${kw}</span>`)
+            .join('');
+
+        const actions = violation.is_reviewed
+            ? ''
+            : `
+                <div class="violation-actions">
+                    <button class="btn-ban" onclick="banUserFromViolation(${violation.user_id}, '${violation.username}', ${violation.id})">
+                        🚫 Забанить пользователя
+                    </button>
+                    <button class="btn-review" onclick="markViolationAsReviewed(${violation.id})">
+                        ✓ Отметить проверенным
+                    </button>
+                </div>
+            `;
+
+        card.innerHTML = `
+            <div class="violation-header">
+                <div class="violation-user">
+                    <div class="violation-avatar">${initial}</div>
+                    <div>
+                        <strong>${violation.display_name}</strong>
+                        <div style="font-size: 12px; color: #999;">@${violation.username} (ID: ${violation.user_id})</div>
+                    </div>
+                </div>
+                <div style="text-align: right;">
+                    ${reviewedBadge}
+                    <div class="violation-date">${violation.created_at}</div>
+                </div>
+            </div>
+            
+            <div class="violation-message">
+                <strong>Заблокированное сообщение:</strong><br>
+                "${violation.message_text}"
+            </div>
+            
+            <div class="violation-keywords">
+                <strong>Найденные запрещённые слова:</strong><br>
+                ${keywordsBadges}
+            </div>
+            
+            ${actions}
+        `;
+
+        container.appendChild(card);
+    });
+}
+
+function updateViolationsStats(violations) {
+    document.getElementById('violationsCount').textContent = violations.length;
+
+    const unreviewedCount = violations.filter(v => !v.is_reviewed).length;
+    document.getElementById('unreviewedCount').textContent = unreviewedCount;
+}
+
+async function banUserFromViolation(userId, username, violationId) {
+    if (!confirm(`Забанить пользователя "${username}"?\n\nПользователь не сможет отправлять сообщения в чат.`)) {
+        return;
+    }
+
+    const userData = localStorage.getItem('user');
+    if (!userData) return;
+
+    const user = JSON.parse(userData);
+
+    try {
+        const response = await fetch(`/api/auth/ban-user?admin_id=${user.id}&target_user_id=${userId}`, {
+            method: 'POST'
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+            alert(`✅ ${data.message}`);
+
+            // Автоматически отмечаем нарушение как проверенное
+            await markViolationAsReviewed(violationId, false);
+
+            loadViolations();
+            loadUsers();
+        } else {
+            alert(`❌ ${data.detail}`);
+        }
+
+    } catch (error) {
+        console.error('Ошибка:', error);
+        alert('❌ Ошибка при бане пользователя');
+    }
+}
+
+async function markViolationAsReviewed(violationId, showAlert = true) {
+    const userData = localStorage.getItem('user');
+    if (!userData) return;
+
+    const user = JSON.parse(userData);
+
+    try {
+        const response = await fetch(`/api/violations/${violationId}/review?admin_id=${user.id}`, {
+            method: 'POST'
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+            if (showAlert) {
+                alert('✅ Нарушение отмечено как проверенное');
+            }
+            loadViolations();
+        } else {
+            if (showAlert) {
+                alert('❌ Ошибка');
+            }
+        }
+
+    } catch (error) {
+        console.error('Ошибка:', error);
+    }
+}
+
+
+async function unbanUser(userId, username) {
+    if (!confirm(`Разбанить пользователя "${username}"?`)) {
+        return;
+    }
+
+    const userData = localStorage.getItem('user');
+    if (!userData) return;
+
+    const user = JSON.parse(userData);
+
+    try {
+        const response = await fetch(`/api/auth/unban-user?admin_id=${user.id}&target_user_id=${userId}`, {
+            method: 'POST'
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+            alert(`✅ ${data.message}`);
+            loadUsers();
+        } else {
+            alert(`❌ ${data.detail}`);
+        }
+
+    } catch (error) {
+        console.error('Ошибка:', error);
+        alert('❌ Ошибка при разбане пользователя');
     }
 }
 

@@ -258,3 +258,105 @@ async def remove_admin(
         "message": f"Права администратора у {target_user.username} сняты",
         "user": target_user.to_dict()
     }
+
+
+@router.post("/ban-user")
+async def ban_user(
+        admin_id: int,
+        target_user_id: int,
+        db: AsyncSession = Depends(get_db)
+):
+    """Забанить пользователя (только для админов)"""
+
+    # Проверяем права админа
+    result = await db.execute(select(User).where(User.id == admin_id))
+    admin = result.scalar_one_or_none()
+
+    if not admin or not admin.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Доступ запрещён. Только для администраторов."
+        )
+
+    # Находим пользователя
+    result = await db.execute(select(User).where(User.id == target_user_id))
+    target_user = result.scalar_one_or_none()
+
+    if not target_user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Пользователь не найден"
+        )
+
+    if target_user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Нельзя забанить администратора"
+        )
+
+    if target_user.is_banned:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Пользователь уже забанен"
+        )
+
+    # Баним пользователя
+    target_user.is_banned = True
+    await db.commit()
+    await db.refresh(target_user)
+
+    print(f"🚫 Пользователь {target_user.username} забанен")
+
+    return {
+        "status": "success",
+        "message": f"Пользователь {target_user.username} забанен",
+        "user": target_user.to_dict()
+    }
+
+
+@router.post("/unban-user")
+async def unban_user(
+        admin_id: int,
+        target_user_id: int,
+        db: AsyncSession = Depends(get_db)
+):
+    """Разбанить пользователя (только для админов)"""
+
+    # Проверяем права админа
+    result = await db.execute(select(User).where(User.id == admin_id))
+    admin = result.scalar_one_or_none()
+
+    if not admin or not admin.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Доступ запрещён. Только для администраторов."
+        )
+
+    # Находим пользователя
+    result = await db.execute(select(User).where(User.id == target_user_id))
+    target_user = result.scalar_one_or_none()
+
+    if not target_user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Пользователь не найден"
+        )
+
+    if not target_user.is_banned:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Пользователь не забанен"
+        )
+
+    # Разбаниваем пользователя
+    target_user.is_banned = False
+    await db.commit()
+    await db.refresh(target_user)
+
+    print(f"✅ Пользователь {target_user.username} разбанен")
+
+    return {
+        "status": "success",
+        "message": f"Пользователь {target_user.username} разбанен",
+        "user": target_user.to_dict()
+    }
