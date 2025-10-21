@@ -15,12 +15,29 @@ async def lifespan(app: FastAPI):
     """Lifecycle события - выполняется при старте и остановке"""
     # Startup
     print("🚀 Запуск приложения...")
+
+    # Инициализация БД
     await init_db()
     print("✅ База данных инициализирована")
+
+    # Инициализация начальных данных
+    from app.database import AsyncSessionLocal
+    from app.init_data import initialize_default_data
+
+    async with AsyncSessionLocal() as db:
+        await initialize_default_data(db)
+
     print(f"🛡️ DLP система активна. Запрещённые слова: {dlp_engine.text_analyzer.get_keywords()}")
+    print("\n" + "=" * 60)
+    print("✨ Сервер готов к работе!")
+    print("   📱 Откройте: http://localhost:8000")
+    print("   📚 API docs: http://localhost:8000/docs")
+    print("=" * 60 + "\n")
+
     yield
+
     # Shutdown
-    print("👋 Остановка приложения...")
+    print("\n👋 Остановка приложения...")
 
 
 app = FastAPI(
