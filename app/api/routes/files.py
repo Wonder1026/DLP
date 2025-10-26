@@ -23,6 +23,7 @@ MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
 @router.post("/upload")
 async def upload_file(
         user_id: int,
+        moderation_type: str = "manual",  # ← добавили параметр
         file: UploadFile = File(...),
         db: AsyncSession = Depends(get_db)
 ):
@@ -36,6 +37,13 @@ async def upload_file(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Пользователь не найден"
+        )
+
+    # Проверяем тип модерации
+    if moderation_type not in ["manual", "virustotal"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Недопустимый тип модерации. Разрешены: manual, virustotal"
         )
 
     # Проверяем расширение файла
@@ -75,18 +83,20 @@ async def upload_file(
         file_size=file_size,
         file_type=file_ext.replace(".", ""),
         mime_type=file.content_type,
-        status="pending"
+        status="pending",
+        moderation_type=moderation_type  # ← сохраняем тип модерации
     )
 
     db.add(uploaded_file)
     await db.commit()
     await db.refresh(uploaded_file)
 
-    print(f"📎 Файл загружен: {file.filename} от {user.display_name}")
+    moderation_text = "ручную модерацию" if moderation_type == "manual" else "проверку VirusTotal"
+    print(f"📎 Файл загружен: {file.filename} от {user.display_name} (тип модерации: {moderation_type})")
 
     return {
         "status": "success",
-        "message": "Файл загружен и отправлен на модерацию",
+        "message": f"Файл загружен и отправлен на {moderation_text}",
         "file": uploaded_file.to_dict()
     }
 

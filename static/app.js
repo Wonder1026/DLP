@@ -200,6 +200,8 @@ document.getElementById('messageInput').addEventListener('keypress', function(e)
 });
 
 
+let selectedFile = null;
+
 async function handleFileSelect(event) {
     const file = event.target.files[0];
     if (!file) return;
@@ -222,14 +224,47 @@ async function handleFileSelect(event) {
         return;
     }
 
-    // Показываем сообщение о загрузке
-    addFileUploadingMessage(file);
-
-    // Загружаем файл
-    await uploadFile(file);
+    // Сохраняем файл и показываем модальное окно
+    selectedFile = file;
+    showModerationModal(file);
 
     // Очищаем input
     event.target.value = '';
+}
+
+function showModerationModal(file) {
+    const modal = document.getElementById('moderationModal');
+    const fileIcon = getFileIcon(file.name);
+    const fileSize = formatFileSize(file.size);
+
+    document.getElementById('modalFileIcon').textContent = fileIcon;
+    document.getElementById('modalFileName').textContent = file.name;
+    document.getElementById('modalFileSize').textContent = fileSize;
+
+    modal.style.display = 'flex';
+}
+
+function cancelUpload() {
+    const modal = document.getElementById('moderationModal');
+    modal.style.display = 'none';
+    selectedFile = null;
+}
+
+async function confirmUpload() {
+    if (!selectedFile) return;
+
+    const modal = document.getElementById('moderationModal');
+    const moderationType = document.querySelector('input[name="moderationType"]:checked').value;
+
+    modal.style.display = 'none';
+
+    // Показываем сообщение о загрузке
+    addFileUploadingMessage(selectedFile);
+
+    // Загружаем файл с выбранным типом модерации
+    await uploadFileWithModeration(selectedFile, moderationType);
+
+    selectedFile = null;
 }
 
 function addFileUploadingMessage(file) {
@@ -255,7 +290,7 @@ function addFileUploadingMessage(file) {
     chatBox.scrollTop = chatBox.scrollHeight;
 }
 
-async function uploadFile(file) {
+async function uploadFileWithModeration(file, moderationType) {
     const formData = new FormData();
     formData.append('file', file);
 
@@ -266,7 +301,7 @@ async function uploadFile(file) {
             progressBar.style.width = '50%';
         }
 
-        const response = await fetch(`/api/files/upload?user_id=${currentUser.id}`, {
+        const response = await fetch(`/api/files/upload?user_id=${currentUser.id}&moderation_type=${moderationType}`, {
             method: 'POST',
             body: formData
         });
@@ -284,6 +319,12 @@ async function uploadFile(file) {
         }
 
         if (response.ok) {
+            // Показываем системное сообщение о типе модерации
+            const moderationText = moderationType === 'manual'
+                ? '🛡️ Файл отправлен на ручную модерацию администратором'
+                : '🌐 Файл отправлен на проверку через VirusTotal API';
+            addSystemMessage(moderationText);
+
             // Добавляем сообщение об успешной загрузке себе
             addFileMessage(data.file, 'sent');
 
@@ -294,7 +335,7 @@ async function uploadFile(file) {
                     user_id: currentUser.id,
                     username: currentUser.username,
                     user: currentUser.display_name,
-                    file: data.file  // Отправляем полную информацию о файле
+                    file: data.file
                 }));
             }
         } else {

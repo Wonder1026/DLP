@@ -398,6 +398,15 @@
                 max-width: 85%;
             }
         }
+
+        #moderationModal label:has(input:checked) {
+            border-color: #667eea;
+            background: #f8f9ff;
+        }
+
+        #moderationModal label:hover {
+            border-color: #667eea;
+        }
     </style>
 </head>
 <body>
@@ -445,5 +454,50 @@
     </div>
 
     <script src="/static/app.js"></script>
+
+    <!-- Модальное окно выбора модерации -->
+    <div id="moderationModal"
+         style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center;">
+        <div style="background: white; border-radius: 15px; padding: 30px; max-width: 500px; width: 90%; box-shadow: 0 20px 60px rgba(0,0,0,0.3);">
+            <h2 style="color: #667eea; margin-bottom: 20px;">🔒 Выберите тип модерации</h2>
+
+            <div id="filePreview"
+                 style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 20px; text-align: center;">
+                <div style="font-size: 48px; margin-bottom: 10px;" id="modalFileIcon">📄</div>
+                <div style="font-weight: bold; color: #333;" id="modalFileName">Файл</div>
+                <div style="font-size: 12px; color: #999;" id="modalFileSize">0 KB</div>
+            </div>
+
+            <div style="margin-bottom: 20px;">
+                <label style="display: block; padding: 15px; border: 2px solid #e9ecef; border-radius: 8px; margin-bottom: 10px; cursor: pointer; transition: all 0.3s;">
+                    <input type="radio" name="moderationType" value="manual" checked style="margin-right: 10px;">
+                    <strong>🛡️ Ручная модерация</strong>
+                    <p style="margin: 8px 0 0 28px; font-size: 13px; color: #666;">
+                        Файл будет проверен администратором. <br>
+                        <span style="color: #28a745;">✓ Рекомендуется для конфиденциальных документов</span>
+                    </p>
+                </label>
+
+                <label style="display: block; padding: 15px; border: 2px solid #e9ecef; border-radius: 8px; cursor: pointer; transition: all 0.3s;">
+                    <input type="radio" name="moderationType" value="virustotal" style="margin-right: 10px;">
+                    <strong>🌐 VirusTotal API</strong>
+                    <p style="margin: 8px 0 0 28px; font-size: 13px; color: #666;">
+                        Автоматическая проверка на вирусы. <br>
+                        <span style="color: #dc3545;">⚠️ Файл будет отправлен на внешний сервис</span>
+                    </p>
+                </label>
+            </div>
+
+            <div style="display: flex; gap: 10px;">
+                <button onclick="cancelUpload()" style="flex: 1; background: #6c757d; padding: 12px;">
+                    Отмена
+                </button>
+                <button onclick="confirmUpload()"
+                        style="flex: 1; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 12px;">
+                    Загрузить
+                </button>
+            </div>
+        </div>
+    </div>
 </body>
 </html>
