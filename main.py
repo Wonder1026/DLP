@@ -4,7 +4,7 @@ from fastapi.responses import FileResponse
 from contextlib import asynccontextmanager
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
-from app.api.routes import messages, dlp_admin, auth, violations
+from app.api.routes import messages, dlp_admin, auth, violations, files
 from app.websocket.manager import manager
 from app.database import init_db, get_db
 from app.dlp.engine import dlp_engine
@@ -74,6 +74,13 @@ app.include_router(
     tags=["violations"]
 )
 
+app.include_router(
+    files.router,
+    prefix="/api/files",
+    tags=["files"]
+)
+
+
 
 @app.get("/")
 def root():
@@ -118,6 +125,21 @@ async def websocket_endpoint(websocket: WebSocket):
 
             user_id = data.get("user_id")
             user = data.get("user", "Аноним")
+
+            # Обработка файлов
+            if data.get("type") == "file":
+                print(f"📎 Получено уведомление о файле от {user}")
+
+                # Просто транслируем информацию о файле всем
+                await manager.broadcast({
+                    "type": "file",
+                    "user_id": user_id,
+                    "username": data.get("username"),
+                    "user": user,
+                    "file": data.get("file")
+                })
+                continue
+
             text = data.get("text", "")
 
             print(f"📨 Получено сообщение от {user}: {text}")

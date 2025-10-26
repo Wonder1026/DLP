@@ -58,6 +58,9 @@ Desktop.ini
 uploads/
 temp/
 static/uploads/
+*.exe
+*.docx
+*.doc
 
 # Distribution / packaging
 dist/
@@ -88,3 +91,5 @@ dmypy.json
 
 # Pyre
 .pyre/
+
+

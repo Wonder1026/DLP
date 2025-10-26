@@ -17,6 +17,7 @@ dependencies = [
     "aiosqlite (>=0.21.0,<0.22.0)",
     "flashtext (>=2.7,<3.0)",
     "passlib[bcrypt] (>=1.7.4,<2.0.0)",
+    "python-multipart (>=0.0.20,<0.0.21)",
 ]
 
 

@@ -3,6 +3,7 @@ window.addEventListener('load', function() {
     loadKeywords();
     loadUsers();
     loadViolations();
+    loadFiles();
 });
 
 async function loadKeywords() {
@@ -510,3 +511,182 @@ async function unbanUser(userId, username) {
     }
 }
 
+// Загрузка файлов
+async function loadFiles() {
+    try {
+        const userData = localStorage.getItem('user');
+        if (!userData) return;
+
+        const user = JSON.parse(userData);
+        const showOnlyPending = document.getElementById('showOnlyPendingFiles').checked;
+
+        let url = showOnlyPending
+            ? `/api/files/pending?admin_id=${user.id}`
+            : `/api/files/all?admin_id=${user.id}`;
+
+        const response = await fetch(url);
+        const data = await response.json();
+
+        displayFiles(data.files);
+        updateFilesStats(data.files);
+
+    } catch (error) {
+        console.error('Ошибка загрузки файлов:', error);
+    }
+}
+
+function displayFiles(files) {
+    const container = document.getElementById('filesList');
+    container.innerHTML = '';
+
+    if (files.length === 0) {
+        container.innerHTML = '<div class="empty-state">Нет файлов</div>';
+        return;
+    }
+
+    files.forEach(file => {
+        const card = document.createElement('div');
+        card.className = `file-card ${file.status}`;
+
+        const fileIcon = getFileIconForAdmin(file.filename);
+        const fileSize = formatFileSize(file.file_size);
+
+        const statusBadge = file.status === 'pending'
+            ? '<span class="file-status-badge pending">⏳ На модерации</span>'
+            : file.status === 'approved'
+            ? '<span class="file-status-badge approved">✓ Одобрено</span>'
+            : '<span class="file-status-badge rejected">✗ Отклонено</span>';
+
+        const actions = file.status === 'pending'
+            ? `
+                <div class="file-actions">
+                    <button class="btn-approve" onclick="approveFile(${file.id})">
+                        ✓ Одобрить
+                    </button>
+                    <button class="btn-reject" onclick="rejectFile(${file.id})">
+                        ✗ Отклонить
+                    </button>
+                </div>
+            `
+            : '';
+
+        card.innerHTML = `
+            <div class="file-header">
+                <div class="file-user">
+                    <div class="file-icon-big">${fileIcon}</div>
+                    <div>
+                        <strong>${file.display_name}</strong>
+                        <div style="font-size: 12px; color: #999;">@${file.username} (ID: ${file.user_id})</div>
+                    </div>
+                </div>
+                <div style="text-align: right;">
+                    ${statusBadge}
+                    <div style="font-size: 12px; color: #999; margin-top: 4px;">${file.created_at}</div>
+                </div>
+            </div>
+            
+            <div class="file-details">
+                <div class="file-filename">📄 ${file.filename}</div>
+                <div class="file-meta">
+                    <strong>Размер:</strong> ${fileSize} | 
+                    <strong>Тип:</strong> ${file.file_type.toUpperCase()}
+                </div>
+            </div>
+            
+            ${actions}
+        `;
+
+        container.appendChild(card);
+    });
+}
+
+function updateFilesStats(files) {
+    document.getElementById('filesCount').textContent = files.length;
+
+    const pendingCount = files.filter(f => f.status === 'pending').length;
+    document.getElementById('pendingFilesCount').textContent = pendingCount;
+}
+
+function getFileIconForAdmin(filename) {
+    const ext = filename.substring(filename.lastIndexOf('.')).toLowerCase();
+
+    switch(ext) {
+        case '.exe':
+            return '⚙️';
+        case '.doc':
+        case '.docx':
+            return '📄';
+        default:
+            return '📎';
+    }
+}
+
+function formatFileSize(bytes) {
+    if (bytes === 0) return '0 Bytes';
+
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+
+    return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+}
+
+async function approveFile(fileId) {
+    if (!confirm('Одобрить этот файл?')) {
+        return;
+    }
+
+    const userData = localStorage.getItem('user');
+    if (!userData) return;
+
+    const user = JSON.parse(userData);
+
+    try {
+        const response = await fetch(`/api/files/${fileId}/approve?admin_id=${user.id}`, {
+            method: 'POST'
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+            alert(`✅ ${data.message}`);
+            loadFiles();
+        } else {
+            alert(`❌ ${data.detail}`);
+        }
+
+    } catch (error) {
+        console.error('Ошибка:', error);
+        alert('❌ Ошибка при одобрении файла');
+    }
+}
+
+async function rejectFile(fileId) {
+    if (!confirm('Отклонить этот файл?')) {
+        return;
+    }
+
+    const userData = localStorage.getItem('user');
+    if (!userData) return;
+
+    const user = JSON.parse(userData);
+
+    try {
+        const response = await fetch(`/api/files/${fileId}/reject?admin_id=${user.id}`, {
+            method: 'POST'
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+            alert(`✅ ${data.message}`);
+            loadFiles();
+        } else {
+            alert(`❌ ${data.detail}`);
+        }
+
+    } catch (error) {
+        console.error('Ошибка:', error);
+        alert('❌ Ошибка при отклонении файла');
+    }
+}
