@@ -8,6 +8,9 @@ from app.database import get_db
 from app.models.file import UploadedFile
 from app.models.user import User
 from app.websocket.manager import manager
+from fastapi.responses import FileResponse as FastAPIFileResponse
+from docx import Document
+
 
 router = APIRouter()
 
@@ -391,3 +394,218 @@ async def get_my_files(user_id: int, db: AsyncSession = Depends(get_db)):
     return {
         "files": [f.to_dict() for f in files]
     }
+
+
+@router.post("/{file_id}/check-virustotal")
+async def check_virustotal(
+        file_id: int,
+        admin_id: int,
+        db: AsyncSession = Depends(get_db)
+):
+    """Проверить файл через VirusTotal API"""
+
+    # Проверяем права админа
+    result = await db.execute(select(User).where(User.id == admin_id))
+    admin = result.scalar_one_or_none()
+
+    if not admin or not admin.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Доступ запрещён"
+        )
+
+    # Находим файл
+    result = await db.execute(select(UploadedFile).where(UploadedFile.id == file_id))
+    file_obj = result.scalar_one_or_none()
+
+    if not file_obj:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Файл не найден"
+        )
+
+    # Проверяем через VirusTotal
+    from app.services.virustotal_service import virustotal_service
+    import json
+
+    result = await virustotal_service.scan_file(file_obj.file_path)
+
+    # Сохраняем результат
+    file_obj.virustotal_result = json.dumps(result, ensure_ascii=False)
+
+    # Автоматически одобряем/отклоняем в зависимости от результата
+    if result.get("status") == "clean":
+        file_obj.status = "approved"
+        print(f"✅ Файл автоматически одобрен (VirusTotal: чисто)")
+    elif result.get("status") == "malicious":
+        file_obj.status = "rejected"
+        print(f"❌ Файл автоматически отклонён (VirusTotal: обнаружены вирусы)")
+    else:
+        # Если подозрительный или ошибка - оставляем на ручную проверку
+        print(f"⚠️ Файл требует ручной проверки (VirusTotal: {result.get('status')})")
+
+    await db.commit()
+    await db.refresh(file_obj)
+
+    # Отправляем обновление статуса через WebSocket
+    from app.websocket.manager import manager
+    await manager.broadcast({
+        "type": "file_status_update",
+        "file_id": file_obj.id,
+        "status": file_obj.status
+    })
+
+    return {
+        "status": "success",
+        "message": "Проверка VirusTotal завершена",
+        "virustotal_result": result,
+        "file": file_obj.to_dict()
+    }
+
+
+
+
+
+@router.get("/{file_id}/download")
+async def download_file(
+        file_id: int,
+        user_id: int,
+        db: AsyncSession = Depends(get_db)
+):
+    """Скачать файл (только одобренные)"""
+
+    # Проверяем пользователя
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Пользователь не найден"
+        )
+
+    # Находим файл
+    result = await db.execute(select(UploadedFile).where(UploadedFile.id == file_id))
+    file_obj = result.scalar_one_or_none()
+
+    if not file_obj:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Файл не найден"
+        )
+
+    # Проверяем статус файла
+    if file_obj.status != "approved":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Файл не одобрен. Скачивание недоступно."
+        )
+
+    # Проверяем существование файла на диске
+    file_path = Path(file_obj.file_path)
+    if not file_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Файл не найден на сервере"
+        )
+
+    print(f"📥 Скачивание файла: {file_obj.filename} пользователем {user.username}")
+
+    # Возвращаем файл для скачивания
+    return FastAPIFileResponse(
+        path=str(file_path),
+        filename=file_obj.filename,
+        media_type='application/octet-stream'
+    )
+
+
+
+
+
+@router.get("/{file_id}/preview")
+async def preview_file(
+        file_id: int,
+        user_id: int,
+        db: AsyncSession = Depends(get_db)
+):
+    """Предпросмотр Word документа"""
+
+    # Проверяем пользователя
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Пользователь не найден"
+        )
+
+    # Находим файл
+    result = await db.execute(select(UploadedFile).where(UploadedFile.id == file_id))
+    file_obj = result.scalar_one_or_none()
+
+    if not file_obj:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Файл не найден"
+        )
+
+    # Проверяем статус файла
+    if file_obj.status != "approved":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Файл не одобрен. Предпросмотр недоступен."
+        )
+
+    # Проверяем тип файла
+    if file_obj.file_type not in ["doc", "docx"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Предпросмотр доступен только для Word документов"
+        )
+
+    # Проверяем существование файла
+    file_path = Path(file_obj.file_path)
+    if not file_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Файл не найден на сервере"
+        )
+
+    try:
+        # Читаем Word документ
+        doc = Document(str(file_path))
+
+        # Извлекаем текст из параграфов
+        paragraphs = []
+        for para in doc.paragraphs:
+            if para.text.strip():
+                paragraphs.append({
+                    "text": para.text,
+                    "style": para.style.name if para.style else "Normal"
+                })
+
+        # Извлекаем текст из таблиц
+        tables = []
+        for table in doc.tables:
+            table_data = []
+            for row in table.rows:
+                row_data = [cell.text for cell in row.cells]
+                table_data.append(row_data)
+            tables.append(table_data)
+
+        print(f"👁️ Предпросмотр файла: {file_obj.filename} пользователем {user.username}")
+
+        return {
+            "filename": file_obj.filename,
+            "paragraphs": paragraphs,
+            "tables": tables,
+            "paragraph_count": len(paragraphs),
+            "table_count": len(tables)
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Ошибка чтения документа: {str(e)}"
+        )

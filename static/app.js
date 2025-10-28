@@ -369,11 +369,31 @@ function addFileMessage(fileData, type) {
         ? '✓ Одобрено'
         : '✗ Отклонено';
 
+    // Кнопки действий для одобренных файлов
+    let actionButtons = '';
+    if (fileData.status === 'approved') {
+        const isWordDoc = fileData.file_type === 'doc' || fileData.file_type === 'docx';
+
+        actionButtons = `
+            <div style="margin-top: 10px; display: flex; gap: 8px;">
+                <button onclick="downloadFile(${fileData.id})" style="flex: 1; padding: 8px 12px; background: #28a745; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 13px;">
+                    📥 Скачать
+                </button>
+                ${isWordDoc ? `
+                <button onclick="previewFile(${fileData.id})" style="flex: 1; padding: 8px 12px; background: #17a2b8; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 13px;">
+                    👁️ Предпросмотр
+                </button>
+                ` : ''}
+            </div>
+        `;
+    }
+
     messageDiv.innerHTML = `
         <div class="file-icon">${fileIcon}</div>
         <div class="file-name">${fileData.filename}</div>
         <div class="file-size">${fileSize}</div>
         <div class="file-status ${fileData.status}">${statusText}</div>
+        ${actionButtons}
     `;
 
     chatBox.appendChild(messageDiv);
@@ -429,4 +449,131 @@ function updateFileStatus(fileId, newStatus) {
             }
         }
     });
+}
+
+function downloadFile(fileId) {
+    const url = `/api/files/${fileId}/download?user_id=${currentUser.id}`;
+
+    // Открываем в новом окне для скачивания
+    window.open(url, '_blank');
+
+    console.log(`📥 Скачивание файла ${fileId}`);
+}
+
+async function previewFile(fileId) {
+    try {
+        const response = await fetch(`/api/files/${fileId}/preview?user_id=${currentUser.id}`);
+        const data = await response.json();
+
+        if (response.ok) {
+            showPreviewModal(data);
+        } else {
+            alert(`❌ ${data.detail}`);
+        }
+
+    } catch (error) {
+        console.error('Ошибка предпросмотра:', error);
+        alert('❌ Ошибка при загрузке предпросмотра');
+    }
+}
+
+function showPreviewModal(previewData) {
+    // Создаём модальное окно предпросмотра
+    const modal = document.createElement('div');
+    modal.id = 'previewModal';
+    modal.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0,0,0,0.5);
+        z-index: 1000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+    `;
+
+    const content = document.createElement('div');
+    content.style.cssText = `
+        background: white;
+        border-radius: 15px;
+        padding: 30px;
+        max-width: 800px;
+        width: 100%;
+        max-height: 80vh;
+        overflow-y: auto;
+        box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+    `;
+
+    // Формируем HTML с содержимым документа
+    let paragraphsHtml = '';
+    previewData.paragraphs.forEach(para => {
+        const fontSize = para.style.includes('Heading') ? '20px' : '14px';
+        const fontWeight = para.style.includes('Heading') ? 'bold' : 'normal';
+
+        paragraphsHtml += `
+            <p style="margin-bottom: 12px; font-size: ${fontSize}; font-weight: ${fontWeight}; color: #333;">
+                ${para.text}
+            </p>
+        `;
+    });
+
+    // Таблицы
+    let tablesHtml = '';
+    if (previewData.tables.length > 0) {
+        tablesHtml = '<h3 style="margin-top: 20px; color: #667eea;">Таблицы:</h3>';
+        previewData.tables.forEach((table, index) => {
+            tablesHtml += `
+                <table style="width: 100%; border-collapse: collapse; margin: 15px 0; border: 1px solid #ddd;">
+                    ${table.map((row, rowIndex) => `
+                        <tr style="background: ${rowIndex === 0 ? '#f8f9fa' : 'white'};">
+                            ${row.map(cell => `
+                                <td style="padding: 8px; border: 1px solid #ddd; font-size: 13px;">
+                                    ${cell}
+                                </td>
+                            `).join('')}
+                        </tr>
+                    `).join('')}
+                </table>
+            `;
+        });
+    }
+
+    content.innerHTML = `
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 15px; border-bottom: 2px solid #667eea;">
+            <div>
+                <h2 style="color: #667eea; margin-bottom: 5px;">📄 ${previewData.filename}</h2>
+                <p style="font-size: 13px; color: #999;">
+                    Параграфов: ${previewData.paragraph_count} | Таблиц: ${previewData.table_count}
+                </p>
+            </div>
+            <button onclick="closePreviewModal()" style="background: #dc3545; color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-size: 14px;">
+                ✕ Закрыть
+            </button>
+        </div>
+        
+        <div style="color: #333; line-height: 1.6;">
+            ${paragraphsHtml}
+            ${tablesHtml}
+        </div>
+    `;
+
+    modal.appendChild(content);
+    document.body.appendChild(modal);
+
+    // Закрытие по клику вне окна
+    modal.addEventListener('click', function(e) {
+        if (e.target === modal) {
+            closePreviewModal();
+        }
+    });
+}
+
+function closePreviewModal() {
+    const modal = document.getElementById('previewModal');
+    if (modal) {
+        modal.remove();
+    }
 }

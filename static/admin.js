@@ -551,24 +551,63 @@ function displayFiles(files) {
         const fileIcon = getFileIconForAdmin(file.filename);
         const fileSize = formatFileSize(file.file_size);
 
+        // Бейдж типа модерации
+        const moderationBadge = file.moderation_type === 'virustotal'
+            ? '<span style="background: #17a2b8; color: white; padding: 4px 10px; border-radius: 12px; font-size: 11px; margin-left: 8px;">🌐 VirusTotal</span>'
+            : '<span style="background: #6c757d; color: white; padding: 4px 10px; border-radius: 12px; font-size: 11px; margin-left: 8px;">🛡️ Ручная</span>';
+
         const statusBadge = file.status === 'pending'
             ? '<span class="file-status-badge pending">⏳ На модерации</span>'
             : file.status === 'approved'
             ? '<span class="file-status-badge approved">✓ Одобрено</span>'
             : '<span class="file-status-badge rejected">✗ Отклонено</span>';
 
-        const actions = file.status === 'pending'
-            ? `
-                <div class="file-actions">
-                    <button class="btn-approve" onclick="approveFile(${file.id})">
-                        ✓ Одобрить
-                    </button>
-                    <button class="btn-reject" onclick="rejectFile(${file.id})">
-                        ✗ Отклонить
-                    </button>
-                </div>
-            `
-            : '';
+        // Кнопки действий в зависимости от типа модерации
+        let actions = '';
+        if (file.status === 'pending') {
+            if (file.moderation_type === 'virustotal') {
+                actions = `
+                    <div class="file-actions">
+                        <button class="btn-approve" style="background: #17a2b8;" onclick="checkVirusTotal(${file.id})">
+                            🔍 Проверить VirusTotal
+                        </button>
+                        <button class="btn-approve" onclick="approveFile(${file.id})">
+                            ✓ Одобрить вручную
+                        </button>
+                        <button class="btn-reject" onclick="rejectFile(${file.id})">
+                            ✗ Отклонить
+                        </button>
+                    </div>
+                `;
+            } else {
+                actions = `
+                    <div class="file-actions">
+                        <button class="btn-approve" onclick="approveFile(${file.id})">
+                            ✓ Одобрить
+                        </button>
+                        <button class="btn-reject" onclick="rejectFile(${file.id})">
+                            ✗ Отклонить
+                        </button>
+                    </div>
+                `;
+            }
+        }
+
+        // Результат VirusTotal (если есть)
+        let virusTotalResult = '';
+        if (file.virustotal_result) {
+            try {
+                const result = JSON.parse(file.virustotal_result);
+                virusTotalResult = `
+                    <div style="background: #f8f9fa; padding: 10px; border-radius: 6px; margin-top: 10px; font-size: 13px;">
+                        <strong>Результат VirusTotal:</strong><br>
+                        ${result.summary || 'Проверка завершена'}
+                    </div>
+                `;
+            } catch (e) {
+                console.error('Ошибка парсинга результата VirusTotal:', e);
+            }
+        }
 
         card.innerHTML = `
             <div class="file-header">
@@ -581,6 +620,7 @@ function displayFiles(files) {
                 </div>
                 <div style="text-align: right;">
                     ${statusBadge}
+                    ${moderationBadge}
                     <div style="font-size: 12px; color: #999; margin-top: 4px;">${file.created_at}</div>
                 </div>
             </div>
@@ -593,6 +633,7 @@ function displayFiles(files) {
                 </div>
             </div>
             
+            ${virusTotalResult}
             ${actions}
         `;
 
@@ -688,5 +729,46 @@ async function rejectFile(fileId) {
     } catch (error) {
         console.error('Ошибка:', error);
         alert('❌ Ошибка при отклонении файла');
+    }
+}
+
+async function checkVirusTotal(fileId) {
+    if (!confirm('Проверить файл через VirusTotal API?\n\nФайл будет отправлен на внешний сервис для анализа.')) {
+        return;
+    }
+
+    const userData = localStorage.getItem('user');
+    if (!userData) return;
+
+    const user = JSON.parse(userData);
+
+    // Показываем индикатор загрузки
+    const button = event.target;
+    const originalText = button.innerHTML;
+    button.innerHTML = '⏳ Проверка...';
+    button.disabled = true;
+
+    try {
+        const response = await fetch(`/api/files/${fileId}/check-virustotal?admin_id=${user.id}`, {
+            method: 'POST'
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+            const result = data.virustotal_result;
+            alert(`🔍 Результат VirusTotal:\n\n${result.summary}`);
+            loadFiles();
+        } else {
+            alert(`❌ ${data.detail}`);
+            button.innerHTML = originalText;
+            button.disabled = false;
+        }
+
+    } catch (error) {
+        console.error('Ошибка:', error);
+        alert('❌ Ошибка при проверке файла');
+        button.innerHTML = originalText;
+        button.disabled = false;
     }
 }
