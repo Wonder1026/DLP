@@ -1,12 +1,11 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from contextlib import asynccontextmanager
-from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
-from app.api.routes import messages, dlp_admin, auth, violations, files
+from app.api.routes import messages, dlp_admin, auth, violations, files, url_checks
 from app.websocket.manager import manager
-from app.database import init_db, get_db
+from app.database import init_db
 from app.dlp.engine import dlp_engine
 
 
@@ -80,6 +79,11 @@ app.include_router(
     tags=["files"]
 )
 
+app.include_router(
+    url_checks.router,
+    prefix="/api/url-checks",
+    tags=["url-checks"]
+)
 
 
 @app.get("/")
@@ -88,16 +92,16 @@ def root():
     return FileResponse("static/index.html")
 
 
-@app.get("/admin")
-def admin():
-    """Админ-панель DLP"""
-    return FileResponse("static/admin.html")
-
-
 @app.get("/login")
 def login_page():
     """Страница входа"""
     return FileResponse("static/login.html")
+
+
+@app.get("/admin")
+def admin():
+    """Админ-панель DLP"""
+    return FileResponse("static/admin.html")
 
 
 @app.get("/profile")
@@ -109,28 +113,21 @@ def profile_page():
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """WebSocket для real-time сообщений"""
+    print("\n🔌 Новое WebSocket подключение")
     await manager.connect(websocket)
-
-    # Получаем данные пользователя из первого сообщения
-    user_data = None
 
     try:
         while True:
-            # Получаем сообщение от клиента
+            print("⏳ Ожидание сообщения...")
             data = await websocket.receive_json()
-
-            # Если это первое сообщение, получаем user_id
-            if 'user_id' in data and not user_data:
-                user_data = data
+            print(f"✅ ПОЛУЧЕНЫ ДАННЫЕ: {data}")
 
             user_id = data.get("user_id")
             user = data.get("user", "Аноним")
 
             # Обработка файлов
             if data.get("type") == "file":
-                print(f"📎 Получено уведомление о файле от {user}")
-
-                # Просто транслируем информацию о файле всем
+                print(f"📎 Файл от {user}")
                 await manager.broadcast({
                     "type": "file",
                     "user_id": user_id,
@@ -141,10 +138,9 @@ async def websocket_endpoint(websocket: WebSocket):
                 continue
 
             text = data.get("text", "")
+            print(f"\n📨 Сообщение от {user}: '{text}'")
 
-            print(f"📨 Получено сообщение от {user}: {text}")
-
-            # Проверяем, не забанен ли пользователь
+            # Проверка бана
             if user_id:
                 from app.database import AsyncSessionLocal
                 from sqlalchemy import select
@@ -155,20 +151,23 @@ async def websocket_endpoint(websocket: WebSocket):
                     user_obj = result.scalar_one_or_none()
 
                     if user_obj and user_obj.is_banned:
+                        print(f"🚫 Пользователь {user} забанен")
                         await websocket.send_json({
                             "type": "error",
-                            "message": "❌ Вы заблокированы администратором и не можете отправлять сообщения"
+                            "message": "❌ Вы заблокированы"
                         })
                         continue
 
-            # 🛡️ ПРОВЕРКА DLP
+            # DLP проверка
+            print(f"🛡️ Проверка DLP...")
             dlp_result = dlp_engine.check_message(text, user)
+            print(
+                f"[DLP] allowed={dlp_result['allowed']}, status={dlp_result['status']}, register={dlp_result.get('register_violation')}")
 
-            if not dlp_result["allowed"]:
-                # Сообщение заблокировано!
-                print(f"🚫 Сообщение заблокировано: {dlp_result['reason']}")
+            # Блокируем только запрещённые слова
+            if dlp_result["status"] == "block":
+                print(f"🚫 БЛОКИРУЕМ по ключевым словам")
 
-                # 🚨 СОХРАНЯЕМ НАРУШЕНИЕ В БД
                 if user_id:
                     from app.database import AsyncSessionLocal
                     async with AsyncSessionLocal() as db:
@@ -181,28 +180,121 @@ async def websocket_endpoint(websocket: WebSocket):
                             found_keywords=dlp_result.get("found_keywords", [])
                         )
 
-                # Отправляем уведомление только отправителю
                 await websocket.send_json({
                     "type": "error",
                     "message": f"❌ {dlp_result['reason']}"
                 })
                 continue
 
-            # Сообщение разрешено - сохраняем в БД
+            # Обработка конфиденциальных данных
+            if dlp_result.get("register_violation") and user_id:
+                print(f"⚠️ РЕГИСТРИРУЕМ нарушение (конфиденциальные данные)")
+
+                from app.database import AsyncSessionLocal
+                from app.services.violation_service import violation_service
+
+                async with AsyncSessionLocal() as db:
+                    found_items = []
+                    if dlp_result.get("sensitive_data"):
+                        sensitive_items = [
+                            f"{item['name']}: {item['value']}"
+                            for item in dlp_result["sensitive_data"]["found_data"]
+                        ]
+                        found_items.extend(sensitive_items)
+                        print(f"   Найдено: {found_items}")
+
+                    await manager.save_violation(
+                        db=db,
+                        user_id=user_id,
+                        username=data.get("username", "unknown"),
+                        display_name=user,
+                        message_text=text,
+                        found_keywords=found_items
+                    )
+
+                    violation_result = await violation_service.register_violation(
+                        db=db,
+                        user_id=user_id,
+                        message_text=text,
+                        found_items=found_items
+                    )
+
+                    print(f"📊 Карма: {violation_result['violation_count']}/10")
+
+                    await websocket.send_json({
+                        "type": "warning",
+                        "message": f"⚠️ {dlp_result['reason']}\nНарушений: {violation_result['violation_count']}/10"
+                    })
+
+                    if violation_result["should_notify_admin"]:
+                        print(f"🚨 Отправляем уведомление админам! is_banned={violation_result['is_banned']}")
+                        await manager.broadcast({
+                            "type": "admin_notification",
+                            "notification_type": "user_banned" if violation_result[
+                                "is_banned"] else "violation_warning",
+                            "user_id": violation_result["user_id"],
+                            "username": violation_result["username"],
+                            "display_name": violation_result["display_name"],
+                            "violation_count": violation_result["violation_count"],
+                            "is_banned": violation_result["is_banned"],
+                            "message": f"🚨 Пользователь {violation_result['display_name']} {'ЗАБЛОКИРОВАН' if violation_result['is_banned'] else f'имеет {violation_result['violation_count']} нарушений'}!"
+                        })
+
+            # Обработка URL (требуется проверка)
+            if dlp_result.get("status") == "url_check_required" and user_id:
+                print(f"🔗 Обнаружены URL, требуется проверка")
+
+                from app.database import AsyncSessionLocal
+                from app.models.url_check import URLCheck
+                import json
+
+                async with AsyncSessionLocal() as db:
+                    urls = dlp_result.get("urls", {}).get("urls", [])
+
+                    for url in urls:
+                        # Сохраняем URL на проверку
+                        url_check = URLCheck(
+                            url=url,
+                            user_id=user_id,
+                            username=data.get("username", "unknown"),
+                            display_name=user,
+                            message_text=text,
+                            status="pending"
+                        )
+                        db.add(url_check)
+
+                    await db.commit()
+                    print(f"   Сохранено {len(urls)} URL на проверку")
+
+                # Отправляем предупреждение пользователю
+                await websocket.send_json({
+                    "type": "info",
+                    "message": f"🔗 Обнаружено ссылок: {len(urls)}. Отправлены на проверку."
+                })
+
+
+            # Сохраняем и отправляем сообщение
+            print(f"✅ Сохраняем и отправляем сообщение")
+
             from app.database import AsyncSessionLocal
             async with AsyncSessionLocal() as db:
                 await manager.save_message(db=db, user=user, text=text)
 
-            # Отправляем всем подключенным клиентам
             await manager.broadcast({
                 "type": "message",
                 "user": user,
                 "text": text,
                 "timestamp": data.get("timestamp", "")
             })
+            print(f"✉️ Сообщение отправлено всем\n")
 
     except WebSocketDisconnect:
+        print("❌ WebSocket отключен")
         manager.disconnect(websocket)
+    except Exception as e:
+        print(f"💥 Ошибка в WebSocket: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 @app.get("/health")
@@ -212,3 +304,14 @@ def health():
         "dlp_active": True,
         "forbidden_keywords_count": len(dlp_engine.text_analyzer.get_keywords())
     }
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=settings.DEBUG
+    )

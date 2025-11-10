@@ -4,6 +4,7 @@ window.addEventListener('load', function() {
     loadUsers();
     loadViolations();
     loadFiles();
+    loadUrls();
 });
 
 async function loadKeywords() {
@@ -182,7 +183,13 @@ function displayUsers(users) {
             badges += '<span class="admin-badge" style="background: #6c757d;">BANNED</span>';
         }
 
+        if (user.violation_count > 0) {
+            const violationColor = user.violation_count >= 7 ? '#dc3545' : user.violation_count >= 4 ? '#ffc107' : '#17a2b8';
+            badges += `<span class="admin-badge" style="background: ${violationColor};">⚠️ ${user.violation_count} нарушений</span>`;
+        }
+
         // Кнопка снятия прав (только для супер-админа)
+// Кнопки действий
         let actionButton = '';
         const userData = localStorage.getItem('user');
         if (userData) {
@@ -190,7 +197,14 @@ function displayUsers(users) {
 
             // Кнопка разбана
             if (currentUserData.is_admin && user.is_banned) {
-                actionButton = `<button onclick="unbanUser(${user.id}, '${user.username}')" style="background: #28a745; padding: 6px 12px; font-size: 12px;">Разбанить</button>`;
+                actionButton = `
+            <button onclick="unbanUser(${user.id}, '${user.username}')" style="background: #28a745; padding: 6px 12px; font-size: 12px; margin-right: 5px;">Разбанить</button>
+            <button onclick="resetViolations(${user.id}, '${user.username}')" style="background: #17a2b8; padding: 6px 12px; font-size: 12px;">Сбросить нарушения</button>
+        `;
+            }
+            // Кнопка сброса нарушений для пользователей с нарушениями
+            else if (currentUserData.is_admin && user.violation_count > 0) {
+                actionButton = `<button onclick="resetViolations(${user.id}, '${user.username}')" style="background: #17a2b8; padding: 6px 12px; font-size: 12px;">Сбросить нарушения (${user.violation_count})</button>`;
             }
             // Кнопка снятия админки (только для супер-админа)
             else if (currentUserData.is_super_admin && user.is_admin && !user.is_super_admin) {
@@ -414,6 +428,9 @@ function updateViolationsStats(violations) {
 
     const unreviewedCount = violations.filter(v => !v.is_reviewed).length;
     document.getElementById('unreviewedCount').textContent = unreviewedCount;
+
+    // Обновляем общую статистику
+    calculateStatistics(violations);
 }
 
 async function banUserFromViolation(userId, username, violationId) {
@@ -770,5 +787,294 @@ async function checkVirusTotal(fileId) {
         alert('❌ Ошибка при проверке файла');
         button.innerHTML = originalText;
         button.disabled = false;
+    }
+}
+
+function calculateStatistics(violations) {
+    // Подсчёт различных типов нарушений
+    const totalViolations = violations.length;
+
+    // Считаем нарушения с конфиденциальными данными
+    const sensitiveDataViolations = violations.filter(v =>
+        v.found_keywords.some(kw =>
+            kw.includes('карт') ||
+            kw.includes('Email') ||
+            kw.includes('телефон') ||
+            kw.includes('паспорт') ||
+            kw.includes('ИНН') ||
+            kw.includes('СНИЛС')
+        )
+    ).length;
+
+    // Общее количество сообщений (примерно, на основе нарушений)
+    // В реальности нужен отдельный API endpoint
+    const estimatedTotalMessages = totalViolations * 10; // Примерная оценка
+    const blockRate = totalViolations > 0
+        ? Math.round((totalViolations / estimatedTotalMessages) * 100)
+        : 0;
+
+    document.getElementById('totalMessagesCount').textContent = estimatedTotalMessages;
+    document.getElementById('blockedMessagesCount').textContent = totalViolations;
+    document.getElementById('sensitiveDataCount').textContent = sensitiveDataViolations;
+    document.getElementById('blockRatePercent').textContent = blockRate + '%';
+}
+
+async function resetViolations(userId, username) {
+    if (!confirm(`Сбросить счётчик нарушений у "${username}"?`)) {
+        return;
+    }
+
+    const userData = localStorage.getItem('user');
+    if (!userData) return;
+
+    const user = JSON.parse(userData);
+
+    try {
+        const response = await fetch(`/api/auth/reset-violations?admin_id=${user.id}&target_user_id=${userId}`, {
+            method: 'POST'
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+            alert(`✅ ${data.message}`);
+            loadUsers();
+        } else {
+            alert(`❌ ${data.detail}`);
+        }
+
+    } catch (error) {
+        console.error('Ошибка:', error);
+        alert('❌ Ошибка при сбросе нарушений');
+    }
+}
+
+// Загрузка URL проверок
+async function loadUrls() {
+    try {
+        const userData = localStorage.getItem('user');
+        if (!userData) return;
+
+        const user = JSON.parse(userData);
+        const showOnlyPending = document.getElementById('showOnlyPendingUrls').checked;
+
+        let url = showOnlyPending
+            ? `/api/url-checks/pending?admin_id=${user.id}`
+            : `/api/url-checks/all?admin_id=${user.id}`;
+
+        const response = await fetch(url);
+        const data = await response.json();
+
+        displayUrls(data.urls);
+        updateUrlsStats(data.urls);
+
+    } catch (error) {
+        console.error('Ошибка загрузки URL:', error);
+    }
+}
+
+function displayUrls(urls) {
+    const container = document.getElementById('urlsList');
+    container.innerHTML = '';
+
+    if (urls.length === 0) {
+        container.innerHTML = '<div class="empty-state">Нет ссылок на проверке</div>';
+        return;
+    }
+
+    urls.forEach(urlCheck => {
+        const card = document.createElement('div');
+        card.className = `url-card ${urlCheck.status}`;
+
+        const initial = urlCheck.display_name.charAt(0).toUpperCase();
+
+        const statusBadge = urlCheck.status === 'pending'
+            ? '<span class="url-status-badge pending">⏳ На проверке</span>'
+            : urlCheck.status === 'safe'
+                ? '<span class="url-status-badge safe">✅ Безопасно</span>'
+                : urlCheck.status === 'malicious'
+                    ? '<span class="url-status-badge malicious">⚠️ Опасно</span>'
+                    : '<span class="url-status-badge suspicious">⚠️ Подозрительно</span>';
+
+        // Кнопки действий
+        let actions = '';
+        if (urlCheck.status === 'pending') {
+            actions = `
+                <div class="file-actions">
+                    <button style="background: #17a2b8;" onclick="scanUrlVirusTotal(${urlCheck.id})">
+                        🔍 Проверить VirusTotal
+                    </button>
+                    <button class="btn-approve" onclick="markUrlSafe(${urlCheck.id})">
+                        ✅ Безопасно
+                    </button>
+                    <button class="btn-reject" onclick="markUrlMalicious(${urlCheck.id})">
+                        ⚠️ Опасно
+                    </button>
+                </div>
+            `;
+        }
+
+        // Результат VirusTotal
+        let virusTotalResult = '';
+        if (urlCheck.virustotal_result) {
+            try {
+                const result = JSON.parse(urlCheck.virustotal_result);
+                virusTotalResult = `
+                    <div style="background: #f8f9fa; padding: 10px; border-radius: 6px; margin-top: 10px; font-size: 13px;">
+                        <strong>Результат VirusTotal:</strong><br>
+                        ${result.summary || 'Проверка завершена'}
+                    </div>
+                `;
+            } catch (e) {
+                console.error('Ошибка парсинга результата:', e);
+            }
+        }
+
+        card.innerHTML = `
+            <div class="file-header">
+                <div class="file-user">
+                    <div class="violation-avatar">${initial}</div>
+                    <div>
+                        <strong>${urlCheck.display_name}</strong>
+                        <div style="font-size: 12px; color: #999;">@${urlCheck.username} (ID: ${urlCheck.user_id})</div>
+                    </div>
+                </div>
+                <div style="text-align: right;">
+                    ${statusBadge}
+                    <div style="font-size: 12px; color: #999; margin-top: 4px;">${urlCheck.created_at}</div>
+                </div>
+            </div>
+            
+            <div style="margin: 10px 0;">
+                <strong>Сообщение:</strong><br>
+                <div style="background: #f8f9fa; padding: 10px; border-radius: 6px; margin-top: 5px;">
+                    ${urlCheck.message_text}
+                </div>
+            </div>
+            
+            <div style="margin: 10px 0;">
+                <strong>Ссылка:</strong><br>
+                <div class="url-link">
+                    <a href="${urlCheck.url}" target="_blank" style="color: #17a2b8; text-decoration: none;">
+                        ${urlCheck.url} 🔗
+                    </a>
+                </div>
+            </div>
+            
+            ${virusTotalResult}
+            ${actions}
+        `;
+
+        container.appendChild(card);
+    });
+}
+
+function updateUrlsStats(urls) {
+    document.getElementById('urlsCount').textContent = urls.length;
+
+    const pendingCount = urls.filter(u => u.status === 'pending').length;
+    document.getElementById('pendingUrlsCount').textContent = pendingCount;
+
+    const maliciousCount = urls.filter(u => u.status === 'malicious').length;
+    document.getElementById('maliciousUrlsCount').textContent = maliciousCount;
+}
+
+async function scanUrlVirusTotal(urlCheckId) {
+    if (!confirm('Проверить ссылку через VirusTotal API?')) {
+        return;
+    }
+
+    const userData = localStorage.getItem('user');
+    if (!userData) return;
+
+    const user = JSON.parse(userData);
+
+    const button = event.target;
+    const originalText = button.innerHTML;
+    button.innerHTML = '⏳ Проверка...';
+    button.disabled = true;
+
+    try {
+        const response = await fetch(`/api/url-checks/${urlCheckId}/scan?admin_id=${user.id}`, {
+            method: 'POST'
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+            const result = data.virustotal_result;
+            alert(`🔍 Результат VirusTotal:\n\n${result.summary}`);
+            loadUrls();
+        } else {
+            alert(`❌ ${data.detail}`);
+            button.innerHTML = originalText;
+            button.disabled = false;
+        }
+
+    } catch (error) {
+        console.error('Ошибка:', error);
+        alert('❌ Ошибка при проверке URL');
+        button.innerHTML = originalText;
+        button.disabled = false;
+    }
+}
+
+async function markUrlSafe(urlCheckId) {
+    if (!confirm('Отметить ссылку как безопасную?')) {
+        return;
+    }
+
+    const userData = localStorage.getItem('user');
+    if (!userData) return;
+
+    const user = JSON.parse(userData);
+
+    try {
+        const response = await fetch(`/api/url-checks/${urlCheckId}/mark-safe?admin_id=${user.id}`, {
+            method: 'POST'
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+            alert(`✅ ${data.message}`);
+            loadUrls();
+        } else {
+            alert(`❌ ${data.detail}`);
+        }
+
+    } catch (error) {
+        console.error('Ошибка:', error);
+        alert('❌ Ошибка при обновлении статуса');
+    }
+}
+
+async function markUrlMalicious(urlCheckId) {
+    if (!confirm('Отметить ссылку как ОПАСНУЮ?')) {
+        return;
+    }
+
+    const userData = localStorage.getItem('user');
+    if (!userData) return;
+
+    const user = JSON.parse(userData);
+
+    try {
+        const response = await fetch(`/api/url-checks/${urlCheckId}/mark-malicious?admin_id=${user.id}`, {
+            method: 'POST'
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+            alert(`⚠️ ${data.message}`);
+            loadUrls();
+        } else {
+            alert(`❌ ${data.detail}`);
+        }
+
+    } catch (error) {
+        console.error('Ошибка:', error);
+        alert('❌ Ошибка при обновлении статуса');
     }
 }

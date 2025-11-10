@@ -94,6 +94,123 @@ class VirusTotalService:
                 "harmless": 0
             }
 
+    async def scan_url(self, url: str) -> dict:
+        """
+        Проверить URL через VirusTotal
+
+        Возвращает словарь с результатом
+        """
+
+        if self.api_key == "your_api_key_here":
+            # Режим тестирования без реального API
+            return await self._mock_url_scan_result(url)
+
+        try:
+            import base64
+
+            # VirusTotal требует URL в base64 без padding
+            url_id = base64.urlsafe_b64encode(url.encode()).decode().strip("=")
+
+            async with aiohttp.ClientSession() as session:
+                headers = {"x-apikey": self.api_key}
+
+                # Проверяем существующий отчёт
+                check_url = f"{self.BASE_URL}/urls/{url_id}"
+                async with session.get(check_url, headers=headers) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        return self._parse_url_report(data)
+
+                # Если отчёта нет, отправляем URL на сканирование
+                scan_url = f"{self.BASE_URL}/urls"
+                data = aiohttp.FormData()
+                data.add_field('url', url)
+
+                async with session.post(scan_url, headers=headers, data=data) as response:
+                    if response.status == 200:
+                        return {
+                            "status": "scanning",
+                            "summary": "URL отправлен на проверку. Результат будет доступен через несколько секунд.",
+                            "url": url
+                        }
+                    else:
+                        return {
+                            "status": "error",
+                            "summary": f"Ошибка отправки URL: {response.status}"
+                        }
+
+        except Exception as e:
+            return {
+                "status": "error",
+                "summary": f"Ошибка при проверке URL: {str(e)}"
+            }
+
+    async def _mock_url_scan_result(self, url: str) -> dict:
+        """Имитация результата проверки URL для тестирования"""
+
+        # Список тестовых опасных доменов
+        dangerous_domains = ['malware.com', 'phishing.test', 'virus.test']
+
+        # Проверяем домен
+        is_dangerous = any(domain in url.lower() for domain in dangerous_domains)
+
+        if is_dangerous:
+            return {
+                "status": "malicious",
+                "summary": "⚠️ ОПАСНАЯ ССЫЛКА! Обнаружена фишинговая активность (15/90 сканеров)",
+                "malicious": 15,
+                "suspicious": 5,
+                "clean": 70,
+                "url": url
+            }
+        else:
+            return {
+                "status": "clean",
+                "summary": "✅ Ссылка безопасна (0/90 сканеров)",
+                "malicious": 0,
+                "suspicious": 0,
+                "clean": 90,
+                "url": url
+            }
+
+    def _parse_url_report(self, data: dict) -> dict:
+        """Парсинг отчёта URL от VirusTotal"""
+
+        try:
+            attributes = data.get("data", {}).get("attributes", {})
+            stats = attributes.get("last_analysis_stats", {})
+
+            malicious = stats.get("malicious", 0)
+            suspicious = stats.get("suspicious", 0)
+            harmless = stats.get("harmless", 0)
+            undetected = stats.get("undetected", 0)
+
+            total = malicious + suspicious + harmless + undetected
+
+            if malicious > 0:
+                status = "malicious"
+                summary = f"⚠️ ОПАСНАЯ ССЫЛКА! ({malicious}/{total} сканеров)"
+            elif suspicious > 0:
+                status = "suspicious"
+                summary = f"⚠️ Подозрительная ссылка ({suspicious}/{total} сканеров)"
+            else:
+                status = "clean"
+                summary = f"✅ Ссылка безопасна (0/{total} сканеров)"
+
+            return {
+                "status": status,
+                "summary": summary,
+                "malicious": malicious,
+                "suspicious": suspicious,
+                "clean": harmless,
+                "undetected": undetected
+            }
+
+        except Exception as e:
+            return {
+                "status": "error",
+                "summary": f"Ошибка парсинга отчёта: {str(e)}"
+            }
     def _parse_report(self, data: dict) -> dict:
         """Парсинг отчёта от VirusTotal"""
 

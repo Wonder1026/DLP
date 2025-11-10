@@ -360,3 +360,47 @@ async def unban_user(
         "message": f"Пользователь {target_user.username} разбанен",
         "user": target_user.to_dict()
     }
+
+
+@router.post("/reset-violations")
+async def reset_violations(
+        admin_id: int,
+        target_user_id: int,
+        db: AsyncSession = Depends(get_db)
+):
+    """Сбросить счётчик нарушений пользователя"""
+
+    # Проверяем права админа
+    result = await db.execute(select(User).where(User.id == admin_id))
+    admin = result.scalar_one_or_none()
+
+    if not admin or not admin.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Доступ запрещён. Только для администраторов."
+        )
+
+    # Находим пользователя
+    result = await db.execute(select(User).where(User.id == target_user_id))
+    target_user = result.scalar_one_or_none()
+
+    if not target_user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Пользователь не найден"
+        )
+
+    old_count = target_user.violation_count
+    target_user.violation_count = 0
+    target_user.last_violation_at = None
+
+    await db.commit()
+    await db.refresh(target_user)
+
+    print(f"✅ Нарушения сброшены: {target_user.username} (было {old_count})")
+
+    return {
+        "status": "success",
+        "message": f"Счётчик нарушений у {target_user.username} сброшен (было {old_count})",
+        "user": target_user.to_dict()
+    }

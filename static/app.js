@@ -79,37 +79,56 @@ function connectWebSocket() {
         addSystemMessage('Подключено к серверу');
     };
 
-ws.onmessage = function(event) {
-    const data = JSON.parse(event.data);
-    console.log('📨 Получено:', data);
+    ws.onmessage = function (event) {
+        const data = JSON.parse(event.data);
+        console.log('📨 Получено:', data);
 
-    // Обработка ошибки (блокировка DLP)
-    if (data.type === 'error') {
-        addSystemMessage(data.message);
-        return;
-    }
-
-    // Обновление статуса файла
-    if (data.type === 'file_status_update') {
-        updateFileStatus(data.file_id, data.status);
-        return;
-    }
-
-    // Файл
-    if (data.type === 'file') {
-        // Не добавляем файл дважды себе
-        if (data.user_id !== currentUser.id) {
-            addFileMessage(data.file, 'received');
+        // Обработка ошибки (блокировка DLP)
+        if (data.type === 'error') {
+            addSystemMessage(data.message);
+            return;
         }
-        return;
-    }
 
-    // Обычное сообщение
-    if (data.type === 'message') {
-        const messageType = data.user === currentUser.display_name ? 'sent' : 'received';
-        addMessage(data.text, data.user, messageType, false);
-    }
-};
+        if (data.type === 'info') {
+            addInfoMessage(data.message);
+            return;
+        }
+
+        // Обработка предупреждения (конфиденциальные данные)
+        if (data.type === 'warning') {
+            addWarningMessage(data.message);
+            return;
+        }
+
+        // Уведомление для админов
+        if (data.type === 'admin_notification') {
+            if (currentUser.is_admin) {
+                showAdminNotification(data);
+            }
+            return;
+        }
+
+        // Обновление статуса файла
+        if (data.type === 'file_status_update') {
+            updateFileStatus(data.file_id, data.status);
+            return;
+        }
+
+        // Файл
+        if (data.type === 'file') {
+            // Не добавляем файл дважды себе
+            if (data.user_id !== currentUser.id) {
+                addFileMessage(data.file, 'received');
+            }
+            return;
+        }
+
+        // Обычное сообщение
+        if (data.type === 'message') {
+            const messageType = data.user === currentUser.display_name ? 'sent' : 'received';
+            addMessage(data.text, data.user, messageType, false);
+        }
+    };
 
     ws.onerror = function(error) {
         console.error('❌ Ошибка WebSocket:', error);
@@ -126,16 +145,23 @@ function sendMessage() {
     const input = document.getElementById('messageInput');
     const text = input.value.trim();
 
-    if (!text || !ws) return;
+    if (!text || !ws) {
+        console.log('Нет текста или WebSocket не подключен');
+        return;
+    }
+
+    console.log('Отправляем сообщение:', text);  // ← добавь эту строку для отладки
 
     // Отправляем через WebSocket
     const message = {
-        user_id: currentUser.id,           // ← добавили
-        username: currentUser.username,     // ← добавили
+        user_id: currentUser.id,
+        username: currentUser.username,
         user: currentUser.display_name,
         text: text,
         timestamp: new Date().toLocaleTimeString()
     };
+
+    console.log('Данные для отправки:', message);  // ← добавь эту строку
 
     ws.send(JSON.stringify(message));
 
@@ -576,4 +602,75 @@ function closePreviewModal() {
     if (modal) {
         modal.remove();
     }
+}
+
+function addWarningMessage(message) {
+    const chatBox = document.getElementById('chatBox');
+    const messageDiv = document.createElement('div');
+    messageDiv.className = 'message system';
+    messageDiv.style.background = '#fff3cd';
+    messageDiv.style.borderLeft = '4px solid #ffc107';
+    messageDiv.innerHTML = `<strong>⚠️ Предупреждение:</strong><br>${message}`;
+    chatBox.appendChild(messageDiv);
+    chatBox.scrollTop = chatBox.scrollHeight;
+}
+
+function showAdminNotification(data) {
+    // Создаём всплывающее уведомление для админа
+    const notification = document.createElement('div');
+    notification.style.cssText = `
+        position: fixed;
+        top: 80px;
+        right: 20px;
+        background: ${data.is_banned ? '#dc3545' : '#ffc107'};
+        color: white;
+        padding: 20px;
+        border-radius: 10px;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+        z-index: 9999;
+        max-width: 350px;
+        animation: slideIn 0.3s ease-out;
+    `;
+
+    notification.innerHTML = `
+        <div style="font-weight: bold; margin-bottom: 10px; font-size: 16px;">
+            ${data.is_banned ? '🚨 ПОЛЬЗОВАТЕЛЬ ЗАБЛОКИРОВАН' : '⚠️ ПРЕДУПРЕЖДЕНИЕ'}
+        </div>
+        <div style="margin-bottom: 10px;">
+            <strong>Пользователь:</strong> ${data.display_name} (@${data.username})<br>
+            <strong>Нарушений:</strong> ${data.violation_count}/10
+        </div>
+        ${data.is_banned ? `
+            <button onclick="goToAdminPanel()" style="width: 100%; padding: 10px; background: white; color: #dc3545; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; margin-bottom: 5px;">
+                Перейти в админку
+            </button>
+        ` : ''}
+        <button onclick="this.parentElement.remove()" style="width: 100%; padding: 10px; background: rgba(255,255,255,0.3); color: white; border: none; border-radius: 5px; cursor: pointer;">
+            Закрыть
+        </button>
+    `;
+
+    document.body.appendChild(notification);
+
+    // Автоматически удаляем через 10 секунд
+    setTimeout(() => {
+        if (notification.parentElement) {
+            notification.remove();
+        }
+    }, 10000);
+}
+
+function goToAdminPanel() {
+    window.location.href = '/admin';
+}
+
+function addInfoMessage(message) {
+    const chatBox = document.getElementById('chatBox');
+    const messageDiv = document.createElement('div');
+    messageDiv.className = 'message system';
+    messageDiv.style.background = '#d1ecf1';
+    messageDiv.style.borderLeft = '4px solid #17a2b8';
+    messageDiv.innerHTML = `<strong>ℹ️ Информация:</strong><br>${message}`;
+    chatBox.appendChild(messageDiv);
+    chatBox.scrollTop = chatBox.scrollHeight;
 }
