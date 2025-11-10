@@ -76,3 +76,63 @@ async def mark_as_reviewed(
         "status": "success",
         "message": "Нарушение отмечено как проверенное"
     }
+
+
+@router.get("/statistics")
+async def get_statistics(admin_id: int, db: AsyncSession = Depends(get_db)):
+    """Получить статистику DLP системы"""
+
+    # Проверяем права админа
+    result = await db.execute(select(User).where(User.id == admin_id))
+    admin = result.scalar_one_or_none()
+
+    if not admin or not admin.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Доступ запрещён. Только для администраторов."
+        )
+
+    from app.models.message import Message
+    from sqlalchemy import func
+
+    # Общее количество сообщений
+    result = await db.execute(select(func.count(Message.id)))
+    total_messages = result.scalar() or 0
+
+    # Количество нарушений
+    result = await db.execute(select(func.count(Violation.id)))
+    total_violations = result.scalar() or 0
+
+    # Количество нарушений с конфиденциальными данными
+    result = await db.execute(
+        select(Violation).where(
+            Violation.found_keywords.like('%карт%') |
+            Violation.found_keywords.like('%Email%') |
+            Violation.found_keywords.like('%телефон%') |
+            Violation.found_keywords.like('%паспорт%') |
+            Violation.found_keywords.like('%ИНН%') |
+            Violation.found_keywords.like('%СНИЛС%')
+        )
+    )
+    sensitive_violations = result.scalars().all()
+    sensitive_count = len(sensitive_violations)
+
+    # Процент блокировок
+    block_rate = 0
+    if total_messages > 0:
+        block_rate = round((total_violations / total_messages) * 100, 1)
+
+    # Количество заблокированных пользователей
+    from app.models.user import User as UserModel
+    result = await db.execute(
+        select(func.count(UserModel.id)).where(UserModel.is_banned == True)
+    )
+    banned_users = result.scalar() or 0
+
+    return {
+        "total_messages": total_messages,
+        "total_violations": total_violations,
+        "sensitive_data_violations": sensitive_count,
+        "block_rate": block_rate,
+        "banned_users": banned_users
+    }

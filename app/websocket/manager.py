@@ -18,13 +18,28 @@ class ConnectionManager:
 
     def disconnect(self, websocket: WebSocket):
         """Отключение клиента"""
-        self.active_connections.remove(websocket)
-        print(f"❌ Клиент отключен. Всего подключений: {len(self.active_connections)}")
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
+            print(f"❌ Клиент отключен. Всего подключений: {len(self.active_connections)}")
 
     async def broadcast(self, message: dict):
         """Отправка сообщения всем подключенным клиентам"""
+        disconnected = []
+
         for connection in self.active_connections:
-            await connection.send_json(message)
+            try:
+                await connection.send_json(message)
+            except RuntimeError as e:
+                # WebSocket уже закрыт
+                print(f"⚠️ Не удалось отправить сообщение (соединение закрыто): {e}")
+                disconnected.append(connection)
+            except Exception as e:
+                print(f"⚠️ Ошибка отправки сообщения: {e}")
+                disconnected.append(connection)
+
+        # Удаляем отключенные соединения
+        for conn in disconnected:
+            self.disconnect(conn)
 
     async def save_message(self, db: AsyncSession, user: str, text: str):
         """Сохранение сообщения в БД"""

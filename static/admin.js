@@ -1,5 +1,6 @@
 // Загрузка списка ключевых слов при загрузке страницы
 window.addEventListener('load', function() {
+    loadStatistics();
     loadKeywords();
     loadUsers();
     loadViolations();
@@ -38,6 +39,9 @@ function displayKeywords(keywords) {
         `;
         container.appendChild(tag);
     });
+
+    // Обновляем счётчик
+    document.getElementById('keywordCount').textContent = keywords.length;
 }
 
 async function addKeyword() {
@@ -189,26 +193,43 @@ function displayUsers(users) {
         }
 
         // Кнопка снятия прав (только для супер-админа)
-// Кнопки действий
+        // Кнопки действий
         let actionButton = '';
         const userData = localStorage.getItem('user');
         if (userData) {
             const currentUserData = JSON.parse(userData);
 
-            // Кнопка разбана
-            if (currentUserData.is_admin && user.is_banned) {
-                actionButton = `
-            <button onclick="unbanUser(${user.id}, '${user.username}')" style="background: #28a745; padding: 6px 12px; font-size: 12px; margin-right: 5px;">Разбанить</button>
-            <button onclick="resetViolations(${user.id}, '${user.username}')" style="background: #17a2b8; padding: 6px 12px; font-size: 12px;">Сбросить нарушения</button>
-        `;
+            // Если пользователь забанен
+            if (user.is_banned) {
+                if (currentUserData.is_admin) {
+                    actionButton = `
+                <button onclick="unbanUser(${user.id}, '${user.username}')" style="background: #28a745; padding: 6px 12px; font-size: 12px; margin-right: 5px;">Разбанить</button>
+                <button onclick="resetViolations(${user.id}, '${user.username}')" style="background: #17a2b8; padding: 6px 12px; font-size: 12px;">Сбросить нарушения</button>
+            `;
+                }
             }
-            // Кнопка сброса нарушений для пользователей с нарушениями
-            else if (currentUserData.is_admin && user.violation_count > 0) {
-                actionButton = `<button onclick="resetViolations(${user.id}, '${user.username}')" style="background: #17a2b8; padding: 6px 12px; font-size: 12px;">Сбросить нарушения (${user.violation_count})</button>`;
+            // Если есть нарушения, но не забанен
+            else if (user.violation_count > 0) {
+                if (currentUserData.is_admin && !user.is_admin) {
+                    // Админ может забанить пользователя с нарушениями
+                    actionButton = `
+                <button onclick="banUser(${user.id}, '${user.username}')" style="background: #dc3545; padding: 6px 12px; font-size: 12px; margin-right: 5px;">Забанить</button>
+                <button onclick="resetViolations(${user.id}, '${user.username}')" style="background: #17a2b8; padding: 6px 12px; font-size: 12px;">Сбросить нарушения (${user.violation_count})</button>
+            `;
+                } else if (currentUserData.is_admin) {
+                    actionButton = `<button onclick="resetViolations(${user.id}, '${user.username}')" style="background: #17a2b8; padding: 6px 12px; font-size: 12px;">Сбросить нарушения (${user.violation_count})</button>`;
+                }
+            }
+            // Если это обычный пользователь без нарушений
+            else if (currentUserData.is_admin && !user.is_admin && !user.is_super_admin) {
+                actionButton = `<button onclick="banUser(${user.id}, '${user.username}')" style="background: #dc3545; padding: 6px 12px; font-size: 12px;">Забанить</button>`;
             }
             // Кнопка снятия админки (только для супер-админа)
-            else if (currentUserData.is_super_admin && user.is_admin && !user.is_super_admin) {
-                actionButton = `<button onclick="removeAdmin(${user.id}, '${user.username}')" style="background: #dc3545; padding: 6px 12px; font-size: 12px;">Снять админа</button>`;
+            if (currentUserData.is_super_admin && user.is_admin && !user.is_super_admin) {
+                if (actionButton) {
+                    actionButton += ' ';
+                }
+                actionButton += `<button onclick="removeAdmin(${user.id}, '${user.username}')" style="background: #6c757d; padding: 6px 12px; font-size: 12px;">Снять админа</button>`;
             }
         }
 
@@ -233,13 +254,18 @@ function displayUsers(users) {
     });
 
     container.appendChild(table);
+    updateStats(users);
 }
 
 function updateStats(users) {
+    // Обновляем только счётчики пользователей
     document.getElementById('userCount').textContent = users.length;
 
     const adminCount = users.filter(u => u.is_admin).length;
     document.getElementById('adminCount').textContent = adminCount;
+
+    const bannedCount = users.filter(u => u.is_banned).length;
+    document.getElementById('bannedUsersCount').textContent = bannedCount;
 }
 
 async function makeAdmin() {
@@ -430,7 +456,7 @@ function updateViolationsStats(violations) {
     document.getElementById('unreviewedCount').textContent = unreviewedCount;
 
     // Обновляем общую статистику
-    calculateStatistics(violations);
+    // loadStatistics();
 }
 
 async function banUserFromViolation(userId, username, violationId) {
@@ -790,33 +816,24 @@ async function checkVirusTotal(fileId) {
     }
 }
 
-function calculateStatistics(violations) {
-    // Подсчёт различных типов нарушений
-    const totalViolations = violations.length;
+async function loadStatistics() {
+    try {
+        const userData = localStorage.getItem('user');
+        if (!userData) return;
 
-    // Считаем нарушения с конфиденциальными данными
-    const sensitiveDataViolations = violations.filter(v =>
-        v.found_keywords.some(kw =>
-            kw.includes('карт') ||
-            kw.includes('Email') ||
-            kw.includes('телефон') ||
-            kw.includes('паспорт') ||
-            kw.includes('ИНН') ||
-            kw.includes('СНИЛС')
-        )
-    ).length;
+        const user = JSON.parse(userData);
 
-    // Общее количество сообщений (примерно, на основе нарушений)
-    // В реальности нужен отдельный API endpoint
-    const estimatedTotalMessages = totalViolations * 10; // Примерная оценка
-    const blockRate = totalViolations > 0
-        ? Math.round((totalViolations / estimatedTotalMessages) * 100)
-        : 0;
+        const response = await fetch(`/api/violations/statistics?admin_id=${user.id}`);
+        const data = await response.json();
 
-    document.getElementById('totalMessagesCount').textContent = estimatedTotalMessages;
-    document.getElementById('blockedMessagesCount').textContent = totalViolations;
-    document.getElementById('sensitiveDataCount').textContent = sensitiveDataViolations;
-    document.getElementById('blockRatePercent').textContent = blockRate + '%';
+        document.getElementById('totalMessagesCount').textContent = data.total_messages;
+        document.getElementById('blockedMessagesCount').textContent = data.total_violations;
+        document.getElementById('sensitiveDataCount').textContent = data.sensitive_data_violations;
+        document.getElementById('blockRatePercent').textContent = data.block_rate + '%';
+
+    } catch (error) {
+        console.error('Ошибка загрузки статистики:', error);
+    }
 }
 
 async function resetViolations(userId, username) {
@@ -1076,5 +1093,36 @@ async function markUrlMalicious(urlCheckId) {
     } catch (error) {
         console.error('Ошибка:', error);
         alert('❌ Ошибка при обновлении статуса');
+    }
+}
+
+async function banUser(userId, username) {
+    if (!confirm(`Забанить пользователя "${username}"?\n\nПользователь не сможет отправлять сообщения.`)) {
+        return;
+    }
+
+    const userData = localStorage.getItem('user');
+    if (!userData) return;
+
+    const user = JSON.parse(userData);
+
+    try {
+        const response = await fetch(`/api/auth/ban-user?admin_id=${user.id}&target_user_id=${userId}`, {
+            method: 'POST'
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+            alert(`✅ ${data.message}`);
+            loadUsers();
+            loadStatistics();
+        } else {
+            alert(`❌ ${data.detail}`);
+        }
+
+    } catch (error) {
+        console.error('Ошибка:', error);
+        alert('❌ Ошибка при бане пользователя');
     }
 }

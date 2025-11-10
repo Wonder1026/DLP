@@ -69,7 +69,7 @@ async def scan_url_virustotal(
         admin_id: int,
         db: AsyncSession = Depends(get_db)
 ):
-    """Проверить URL через VirusTotal"""
+    """Проверить URL через VirusTotal и автоматически опубликовать/заблокировать"""
 
     # Проверяем права админа
     result = await db.execute(select(User).where(User.id == admin_id))
@@ -93,24 +93,50 @@ async def scan_url_virustotal(
 
     # Проверяем через VirusTotal
     from app.services.virustotal_service import virustotal_service
+    import json
 
-    result = await virustotal_service.scan_url(url_check.url)
+    vt_result = await virustotal_service.scan_url(url_check.url)
 
     # Сохраняем результат
-    url_check.virustotal_result = json.dumps(result, ensure_ascii=False)
+    url_check.virustotal_result = json.dumps(vt_result, ensure_ascii=False)
+    url_check.is_reviewed = True
 
     # Автоматически определяем статус
-    if result.get("status") == "clean":
+    if vt_result.get("status") == "clean":
         url_check.status = "safe"
-        print(f"✅ URL безопасен: {url_check.url}")
-    elif result.get("status") == "malicious":
-        url_check.status = "malicious"
-        print(f"⚠️ URL опасен: {url_check.url}")
-    elif result.get("status") == "suspicious":
-        url_check.status = "suspicious"
-        print(f"⚠️ URL подозрителен: {url_check.url}")
+        print(f"✅ URL безопасен (VirusTotal): {url_check.url}")
 
-    url_check.is_reviewed = True
+        # Публикуем сообщение в чат
+        from app.websocket.manager import manager
+
+        await manager.save_message(db=db, user=url_check.display_name, text=url_check.message_text)
+
+        await manager.broadcast({
+            "type": "message",
+            "user": url_check.display_name,
+            "text": url_check.message_text,
+            "timestamp": url_check.created_at.strftime("%H:%M:%S")
+        })
+
+        await manager.broadcast({
+            "type": "info",
+            "message": f"✅ Сообщение со ссылкой проверено и опубликовано (VirusTotal)"
+        })
+
+    elif vt_result.get("status") == "malicious":
+        url_check.status = "malicious"
+        print(f"⚠️ URL опасен (VirusTotal): {url_check.url}")
+
+        from app.websocket.manager import manager
+
+        await manager.broadcast({
+            "type": "warning",
+            "message": f"⚠️ Сообщение заблокировано: обнаружена опасная ссылка (VirusTotal)"
+        })
+
+    elif vt_result.get("status") == "suspicious":
+        url_check.status = "suspicious"
+        print(f"⚠️ URL подозрителен (VirusTotal): {url_check.url}")
 
     await db.commit()
     await db.refresh(url_check)
@@ -118,8 +144,9 @@ async def scan_url_virustotal(
     return {
         "status": "success",
         "message": "Проверка URL завершена",
-        "virustotal_result": result,
-        "url_check": url_check.to_dict()
+        "virustotal_result": vt_result,
+        "url_check": url_check.to_dict(),
+        "auto_published": url_check.status == "safe"
     }
 
 
@@ -129,7 +156,7 @@ async def mark_url_safe(
         admin_id: int,
         db: AsyncSession = Depends(get_db)
 ):
-    """Отметить URL как безопасный (ручная проверка)"""
+    """Отметить URL как безопасный и опубликовать сообщение"""
 
     # Проверяем права админа
     result = await db.execute(select(User).where(User.id == admin_id))
@@ -157,11 +184,31 @@ async def mark_url_safe(
     await db.commit()
     await db.refresh(url_check)
 
-    print(f"✅ URL отмечен как безопасный: {url_check.url}")
+    print(f"✅ URL одобрен: {url_check.url}")
+
+    # Публикуем сообщение в чат
+    from app.websocket.manager import manager
+
+    # Сохраняем сообщение в БД
+    await manager.save_message(db=db, user=url_check.display_name, text=url_check.message_text)
+
+    # Отправляем всем в чат
+    await manager.broadcast({
+        "type": "message",
+        "user": url_check.display_name,
+        "text": url_check.message_text,
+        "timestamp": url_check.created_at.strftime("%H:%M:%S")
+    })
+
+    # Уведомляем пользователя
+    await manager.broadcast({
+        "type": "info",
+        "message": f"✅ Ваше сообщение со ссылкой было одобрено администратором"
+    })
 
     return {
         "status": "success",
-        "message": f"URL '{url_check.url}' отмечен как безопасный",
+        "message": f"URL '{url_check.url}' одобрен и сообщение опубликовано",
         "url_check": url_check.to_dict()
     }
 

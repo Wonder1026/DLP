@@ -160,11 +160,14 @@ async def websocket_endpoint(websocket: WebSocket):
 
             # DLP проверка
             print(f"🛡️ Проверка DLP...")
-            dlp_result = dlp_engine.check_message(text, user)
-            print(
-                f"[DLP] allowed={dlp_result['allowed']}, status={dlp_result['status']}, register={dlp_result.get('register_violation')}")
 
-            # Блокируем только запрещённые слова
+            from app.database import AsyncSessionLocal
+            async with AsyncSessionLocal() as db:
+                dlp_result = await dlp_engine.check_message(text, user, db_session=db)
+
+            print(f"[DLP] allowed={dlp_result['allowed']}, status={dlp_result['status']}")
+
+            # Блокируем запрещённые слова
             if dlp_result["status"] == "block":
                 print(f"🚫 БЛОКИРУЕМ по ключевым словам")
 
@@ -183,6 +186,45 @@ async def websocket_endpoint(websocket: WebSocket):
                 await websocket.send_json({
                     "type": "error",
                     "message": f"❌ {dlp_result['reason']}"
+                })
+                continue
+
+            # Блокируем сообщения со ссылками (до модерации)
+            if dlp_result["status"] == "url_moderation_required":
+                print(f"🔗 БЛОКИРУЕМ сообщение со ссылками (требуется модерация)")
+
+                if user_id:
+                    from app.database import AsyncSessionLocal
+                    from app.models.url_check import URLCheck
+
+                    async with AsyncSessionLocal() as db:
+                        urls = dlp_result.get("urls", {}).get("urls", [])
+
+                        for url in urls:
+                            # Проверяем, нет ли уже такого URL на проверке
+                            result = await db.execute(
+                                select(URLCheck).where(URLCheck.url == url)
+                            )
+                            existing = result.scalar_one_or_none()
+
+                            if not existing:
+                                # Создаём новую проверку
+                                url_check = URLCheck(
+                                    url=url,
+                                    user_id=user_id,
+                                    username=data.get("username", "unknown"),
+                                    display_name=user,
+                                    message_text=text,
+                                    status="pending"
+                                )
+                                db.add(url_check)
+
+                        await db.commit()
+                        print(f"   Сохранено {len(urls)} URL на модерацию")
+
+                await websocket.send_json({
+                    "type": "error",
+                    "message": f"❌ {dlp_result['reason']}\nАдминистратор проверит ссылки и примет решение."
                 })
                 continue
 

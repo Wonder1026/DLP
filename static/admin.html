@@ -612,7 +612,7 @@
     <div class="section">
         <h2>📊 Статистика DLP системы</h2>
         <div class="stats">
-            <div class="stat-card" style="background: linear-gradient(135deg, #28a745 0%, #20c997 100%);">
+            <div class="stat-card" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
                 <div class="stat-number" id="totalMessagesCount">0</div>
                 <div class="stat-label">Всего сообщений</div>
             </div>
@@ -622,11 +622,34 @@
             </div>
             <div class="stat-card" style="background: linear-gradient(135deg, #ffc107 0%, #e0a800 100%);">
                 <div class="stat-number" id="sensitiveDataCount">0</div>
-                <div class="stat-label">Конфиденциальных данных</div>
+                <div class="stat-label">Конф. данных</div>
             </div>
             <div class="stat-card" style="background: linear-gradient(135deg, #17a2b8 0%, #138496 100%);">
                 <div class="stat-number" id="blockRatePercent">0%</div>
                 <div class="stat-label">% блокировок</div>
+            </div>
+        </div>
+
+        <!-- Дополнительная детальная статистика -->
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-top: 15px;">
+            <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; border-left: 4px solid #667eea;">
+                <div style="font-size: 24px; font-weight: bold; color: #667eea;" id="keywordCount">0</div>
+                <div style="font-size: 13px; color: #666;">Запрещённых слов</div>
+            </div>
+
+            <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; border-left: 4px solid #28a745;">
+                <div style="font-size: 24px; font-weight: bold; color: #28a745;" id="userCount">0</div>
+                <div style="font-size: 13px; color: #666;">Пользователей</div>
+            </div>
+
+            <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; border-left: 4px solid #ffc107;">
+                <div style="font-size: 24px; font-weight: bold; color: #ffc107;" id="adminCount">0</div>
+                <div style="font-size: 13px; color: #666;">Администраторов</div>
+            </div>
+
+            <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; border-left: 4px solid #dc3545;">
+                <div style="font-size: 24px; font-weight: bold; color: #dc3545;" id="bannedUsersCount">0</div>
+                <div style="font-size: 13px; color: #666;">Забаненных</div>
             </div>
         </div>
     </div>
