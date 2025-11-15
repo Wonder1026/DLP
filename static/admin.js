@@ -816,6 +816,10 @@ async function checkVirusTotal(fileId) {
     }
 }
 
+let violationsChart = null;
+let filesChart = null;
+let urlsChart = null;
+
 async function loadStatistics() {
     try {
         const userData = localStorage.getItem('user');
@@ -826,14 +830,177 @@ async function loadStatistics() {
         const response = await fetch(`/api/violations/statistics?admin_id=${user.id}`);
         const data = await response.json();
 
+        // Основные метрики
         document.getElementById('totalMessagesCount').textContent = data.total_messages;
         document.getElementById('blockedMessagesCount').textContent = data.total_violations;
         document.getElementById('sensitiveDataCount').textContent = data.sensitive_data_violations;
         document.getElementById('blockRatePercent').textContent = data.block_rate + '%';
 
+        // График нарушений за неделю
+        renderViolationsChart(data.violations_by_day);
+
+        // График файлов
+        renderFilesChart(data.files);
+
+        // График URL
+        renderUrlsChart(data.urls);
+
+        // Топ нарушителей
+        renderTopViolators(data.top_violators);
+
     } catch (error) {
         console.error('Ошибка загрузки статистики:', error);
     }
+}
+
+function renderViolationsChart(violationsByDay) {
+    const ctx = document.getElementById('violationsChart');
+
+    // Уничтожаем старый график если есть
+    if (violationsChart) {
+        violationsChart.destroy();
+    }
+
+    const labels = Object.keys(violationsByDay);
+    const data = Object.values(violationsByDay);
+
+    violationsChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'Нарушений',
+                data: data,
+                borderColor: '#dc3545',
+                backgroundColor: 'rgba(220, 53, 69, 0.1)',
+                tension: 0.4,
+                fill: true
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            plugins: {
+                legend: {
+                    display: false
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    ticks: {
+                        stepSize: 1
+                    }
+                }
+            }
+        }
+    });
+}
+
+function renderFilesChart(filesData) {
+    const ctx = document.getElementById('filesChart');
+
+    if (filesChart) {
+        filesChart.destroy();
+    }
+
+    filesChart = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels: ['Одобрено', 'На модерации', 'Отклонено'],
+            datasets: [{
+                data: [filesData.approved, filesData.pending, filesData.rejected],
+                backgroundColor: ['#28a745', '#ffc107', '#dc3545']
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            plugins: {
+                legend: {
+                    position: 'bottom'
+                }
+            }
+        }
+    });
+}
+
+function renderUrlsChart(urlsData) {
+    const ctx = document.getElementById('urlsChart');
+
+    if (urlsChart) {
+        urlsChart.destroy();
+    }
+
+    urlsChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: ['Безопасные', 'Опасные'],
+            datasets: [{
+                label: 'Количество',
+                data: [urlsData.safe, urlsData.malicious],
+                backgroundColor: ['#28a745', '#dc3545']
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            plugins: {
+                legend: {
+                    display: false
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    ticks: {
+                        stepSize: 1
+                    }
+                }
+            }
+        }
+    });
+}
+
+function renderTopViolators(violators) {
+    const container = document.getElementById('topViolatorsList');
+    container.innerHTML = '';
+
+    if (violators.length === 0) {
+        container.innerHTML = '<p style="color: #999; text-align: center;">Нет нарушителей</p>';
+        return;
+    }
+
+    violators.forEach((violator, index) => {
+        const row = document.createElement('div');
+        row.style.cssText = `
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px;
+            margin-bottom: 8px;
+            background: ${index % 2 === 0 ? '#f8f9fa' : 'white'};
+            border-radius: 6px;
+            border-left: 4px solid ${violator.is_banned ? '#dc3545' : '#ffc107'};
+        `;
+
+        const medal = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `${index + 1}.`;
+        const bannedBadge = violator.is_banned ? '<span style="background: #dc3545; color: white; padding: 2px 8px; border-radius: 10px; font-size: 11px; margin-left: 8px;">BANNED</span>' : '';
+
+        row.innerHTML = `
+            <div>
+                <span style="font-size: 20px; margin-right: 10px;">${medal}</span>
+                <strong>${violator.display_name}</strong>
+                <span style="color: #999; font-size: 13px;">@${violator.username}</span>
+                ${bannedBadge}
+            </div>
+            <div style="font-size: 18px; font-weight: bold; color: ${violator.is_banned ? '#dc3545' : '#ffc107'};">
+                ${violator.violation_count} нарушений
+            </div>
+        `;
+
+        container.appendChild(row);
+    });
 }
 
 async function resetViolations(userId, username) {

@@ -32,8 +32,8 @@ function loadUserProfile() {
     }
 
     // Инициалы для аватара
-    const initial = currentUser.display_name.charAt(0).toUpperCase();
-    document.getElementById('avatarInitial').textContent = initial;
+    // const initial = currentUser.display_name.charAt(0).toUpperCase();
+    // document.getElementById('avatarInitial').textContent = initial;
 }
 
 async function handleUpdateProfile(event) {
@@ -58,16 +58,10 @@ async function handleUpdateProfile(event) {
         const data = await response.json();
 
         if (response.ok) {
-            // Обновляем данные в localStorage
             currentUser.display_name = data.user.display_name;
             localStorage.setItem('user', JSON.stringify(data.user));
 
             showSuccess('✅ Профиль успешно обновлён!');
-
-            // Обновляем инициал
-            const initial = displayName.charAt(0).toUpperCase();
-            document.getElementById('avatarInitial').textContent = initial;
-
         } else {
             showError(data.detail || 'Ошибка обновления профиля');
         }
@@ -78,10 +72,6 @@ async function handleUpdateProfile(event) {
     }
 }
 
-function handleAvatarUpload(event) {
-    // Пока просто показываем, что функция в разработке
-    showError('Загрузка фото будет доступна в следующей версии');
-}
 
 function showError(message) {
     const errorDiv = document.getElementById('errorMsg');
